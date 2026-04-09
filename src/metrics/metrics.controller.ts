@@ -1,19 +1,19 @@
-import { Controller, Get, Sse } from '@nestjs/common';
+import { Controller, Get, Sse, MessageEvent } from '@nestjs/common';
 import { MetricsService } from './metrics.service';
-import { interval, Observable, switchMap } from 'rxjs';
-
+import { interval, map, Observable } from 'rxjs';
 @Controller('metrics')
 export class MetricsController {
   constructor(private readonly metricsService: MetricsService) { }
 
   @Sse('stream')
   streamMetrics(): Observable<MessageEvent> {
-    return interval(5000).pipe(
-      switchMap(async () => {
+    return interval(1000).pipe(
+      map((): MessageEvent => {
         const data = this.metricsService.getDashboardMetrics();
-        return new MessageEvent('metrics', {
-          data: JSON.stringify(data)
-        });
+
+        return {
+          data,
+        };
       }),
     );
   }
