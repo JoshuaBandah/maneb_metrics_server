@@ -10,7 +10,7 @@ export class MetricsController {
     return interval(1000).pipe(
       map((): MessageEvent => {
         const data = this.metricsService.getDashboardMetrics();
-
+        console.log(data)
         return {
           data,
         };
