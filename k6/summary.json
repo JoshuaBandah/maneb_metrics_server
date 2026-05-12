@@ -1,0 +1,9 @@
+{
+  "total_requests": 0,
+  "failed_requests": 0,
+  "completed_requests": 0,
+  "queued_requests": 0,
+  "error_rate": 0,
+  "avg_search_duration": 0,
+  "avg_queue_wait": 0
+}

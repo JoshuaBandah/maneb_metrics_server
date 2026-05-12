@@ -51,7 +51,6 @@ export class AuthenticationController {
     const res = this.authenticationService.requestOtp(requestOtpDto)
     return res
   }
-
   @Public()
   @Post('/otp_verify')
   async verifyOtp(

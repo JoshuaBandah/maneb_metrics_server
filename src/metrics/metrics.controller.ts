@@ -7,10 +7,10 @@ export class MetricsController {
 
   @Sse('stream')
   streamMetrics(): Observable<MessageEvent> {
-    return interval(1000).pipe(
+    return interval(60).pipe(//milliseconds
       map((): MessageEvent => {
         const data = this.metricsService.getDashboardMetrics();
-        console.log(data)
+        // console.log(data)
         return {
           data,
         };
