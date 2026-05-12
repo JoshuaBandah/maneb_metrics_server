@@ -103,7 +103,7 @@ export class MetricsService {
     return this.parseMetrics(raw);
   }
 
-  @Cron('*/5 * * * * *')
+  @Cron('*/3 * * * * *')
   async pollMetrics() {
     const data = await this.getMetrics();
     const k6Metrics = await this.getK6Metrics();

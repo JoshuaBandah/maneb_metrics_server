@@ -1,74 +1,14 @@
-// k6-queue-test.js
-
 import http from 'k6/http';
 import { sleep } from 'k6';
-import { Rate, Trend, Counter } from 'k6/metrics';
-
-// =====================================
-// Metrics
-// =====================================
-
-const errorRate = new Rate('error_rate');
-
-const searchDuration = new Trend(
-  'search_duration',
-);
-
-const queueWaitTime = new Trend(
-  'queue_wait_time',
-);
-
-const failedRequests = new Counter(
-  'failed_requests',
-);
-
-const queuedRequests = new Counter(
-  'queued_requests',
-);
-
-const completedRequests = new Counter(
-  'completed_requests',
-);
-
-// =====================================
-// Config
-// =====================================
 
 const BASE_URL = 'http://localhost:3000';
-
 const METRIC_URL = 'http://localhost:3001';
 
 const TOTAL_RECORDS = 4000;
-
+const MAX_POLL_ATTEMPTS = 10;
 const POLL_INTERVAL = 5;
 
-const MAX_POLL_ATTEMPTS = 10;
-
-// =====================================
-// Local VU Metrics
-// NOTE:
-// Every VU has its own copy.
-// NestJS aggregates globally.
-// =====================================
-
-let localMetrics = {
-  add_total_requests: 0,
-  add_failed_requests: 0,
-  add_completed_requests: 0,
-  add_queued_requests: 0,
-};
-
-// =====================================
-// Metric Push Timing
-// =====================================
-
-let lastMetricPush = Date.now();
-
-const METRIC_PUSH_INTERVAL = 5000;
-
-// =====================================
-// Generate Student Data
-// =====================================
+// GENERATE STUDENT
 
 function generateStudentData(studentNumber) {
   const startDate = new Date(2004, 0, 1);
@@ -77,7 +17,7 @@ function generateStudentData(studentNumber) {
 
   targetDate.setDate(
     startDate.getDate() +
-      (studentNumber - 1),
+      (studentNumber - 1)
   );
 
   return {
@@ -91,73 +31,22 @@ function generateStudentData(studentNumber) {
   };
 }
 
-// =====================================
-// Push Increment Metrics
-// =====================================
-
-function pushMetrics() {
-  const hasMetrics =
-    localMetrics.add_total_requests > 0 ||
-    localMetrics.add_failed_requests > 0 ||
-    localMetrics.add_completed_requests >
-      0 ||
-    localMetrics.add_queued_requests > 0;
-
-  if (!hasMetrics) {
-    return;
-  }
-
-  try {
-    http.post(
-      `${METRIC_URL}/k6/live`,
-      JSON.stringify(localMetrics),
-      {
-        headers: {
-          'Content-Type':
-            'application/json',
-        },
-
-        timeout: '3s',
-      },
-    );
-
-    // Reset after successful push
-    localMetrics = {
-      add_total_requests: 0,
-      add_failed_requests: 0,
-      add_completed_requests: 0,
-      add_queued_requests: 0,
-    };
-  } catch (e) {
-    console.error(
-      'Failed to push metrics:',
-      e,
-    );
-  }
-}
-
-// =====================================
-// Submit Queue Request
-// =====================================
+// SUBMIT JOB
 
 function submitToQueue(
   studentNumber,
-  dateOfBirth,
+  dateOfBirth
 ) {
-  localMetrics.add_total_requests++;
-
   const url =
     `${BASE_URL}/grades/view-uncached-results` +
     `?date_of_birth=${encodeURIComponent(
-      dateOfBirth,
+      dateOfBirth
     )}` +
     `&student_number=${encodeURIComponent(
-      studentNumber,
+      studentNumber
     )}`;
 
-  const startTime = Date.now();
-
-  const response = http.get(url, {
+  const res = http.get(url, {
     timeout: '5s',
 
     headers: {
@@ -166,113 +55,92 @@ function submitToQueue(
     },
   });
 
-  const duration =
-    Date.now() - startTime;
-
-  searchDuration.add(duration);
-
-  let success = false;
-
-  let jobId = null;
-
-  if (response.status === 202) {
-    try {
-      const body = JSON.parse(
-        response.body,
-      );
-
-      if (
-        body.success &&
-        body.data
-      ) {
-        success = true;
-
-        jobId = body.data.jobId;
-
-        queuedRequests.add(1);
-
-        localMetrics.add_queued_requests++;
-      }
-    } catch (e) {
-      success = false;
-    }
-  } else {
-    failedRequests.add(1);
-
-    localMetrics.add_failed_requests++;
+  if (res.status !== 202) {
+    return {
+      success: false,
+      jobId: null,
+      reason: 'submit_failed',
+    };
   }
 
-  errorRate.add(!success);
+  try {
+    const body = JSON.parse(
+      res.body
+    );
+
+    if (
+      body.success &&
+      body.data?.jobId
+    ) {
+      return {
+        success: true,
+
+        jobId:
+          body.data.jobId,
+      };
+    }
+  } catch (e) {}
 
   return {
-    success,
-    jobId,
+    success: false,
+    jobId: null,
+    reason: 'invalid_response',
   };
 }
 
-// =====================================
-// Poll Queue Status
-// =====================================
+// POLL RESULT
 
-function pollForResult(
-  jobId,
-  studentNumber,
-) {
+function pollForResult(jobId) {
   const start = Date.now();
 
   let attempts = 0;
 
   while (
-    attempts < MAX_POLL_ATTEMPTS
+    attempts <
+    MAX_POLL_ATTEMPTS
   ) {
-    const url =
-      `${BASE_URL}/grades/queue/status/${jobId}`;
+    const res = http.get(
+      `${BASE_URL}/grades/queue/status/${jobId}`,
+      {
+        timeout: '5s',
 
-    const response = http.get(url, {
-      timeout: '5s',
-
-      headers: {
-        'Content-Type':
-          'application/json',
-      },
-    });
+        headers: {
+          'Content-Type':
+            'application/json',
+        },
+      }
+    );
 
     attempts++;
 
-    if (response.status === 200) {
+    if (res.status === 200) {
       try {
         const body = JSON.parse(
-          response.body,
+          res.body
         );
 
         if (
           body.status ===
           'completed'
         ) {
-          const waitTime =
-            Date.now() - start;
-
-          queueWaitTime.add(
-            waitTime,
-          );
-
-          completedRequests.add(1);
-
-          localMetrics.add_completed_requests++;
-
           return {
             success: true,
-            waitTime,
+
+            waitTime:
+              Date.now() -
+              start,
           };
         }
 
         if (
-          body.status === 'failed'
+          body.status ===
+          'failed'
         ) {
-          localMetrics.add_failed_requests++;
-
           return {
             success: false,
+
+            reason:
+              'backend_failed',
           };
         }
       } catch (e) {}
@@ -281,162 +149,143 @@ function pollForResult(
     sleep(POLL_INTERVAL);
   }
 
-  localMetrics.add_failed_requests++;
-
   return {
     success: false,
+    reason: 'timeout',
   };
 }
 
-// =====================================
-// Full Workflow
-// =====================================
+// PUSH REALTIME RESULT
 
-function runQueueFlow() {
+function pushVUResult(result) {
+  http.post(
+    `${METRIC_URL}/k6/vu-result`,
+    JSON.stringify(result),
+    {
+      headers: {
+        'Content-Type':
+          'application/json',
+      },
+
+      timeout: '3s',
+    }
+  );
+}
+
+// MAIN FLOW
+
+function runFlow() {
   const studentNumber =
     Math.floor(
       Math.random() *
-        TOTAL_RECORDS,
+        TOTAL_RECORDS
     ) + 1;
 
   const student =
     generateStudentData(
-      studentNumber,
+      studentNumber
     );
 
   const submission =
     submitToQueue(
       student.student_number,
-      student.date_of_birth,
+      student.date_of_birth
     );
 
+  // SUBMIT FAILED
   if (!submission.success) {
+    pushVUResult({
+      vu: __VU,
+
+      success: false,
+
+      stage: 'submit',
+
+      reason:
+        submission.reason,
+    });
+
     return;
   }
 
-  pollForResult(
-    submission.jobId,
-    studentNumber,
-  );
+  // POLL RESULT
+  const result =
+    pollForResult(
+      submission.jobId
+    );
+
+  // FINAL RESULT
+  pushVUResult({
+    vu: __VU,
+
+    success:
+      result.success,
+
+    waitTime:
+      result.waitTime || 0,
+
+    stage: result.success
+      ? 'completed'
+      : 'failed_or_timeout',
+
+    reason:
+      result.reason || null,
+  });
 }
 
-// =====================================
-// k6 Load Configuration
-// =====================================
+// LOAD PROFILE
 
-export let options = {
+export const options = {
   scenarios: {
     queue_test: {
       executor: 'ramping-vus',
 
       stages: [
         {
-          duration: '3m',
-          target: 500,
+          duration: '1m',
+          target: 4000,
         },
 
+        // optional ramp down
         {
-          duration: '3m',
-          target: 100,
-        },
-
-        {
-          duration: '3m',
-          target: 400,
+          duration: '30s',
+          target: 0,
         },
       ],
     },
   },
 };
 
-// =====================================
-// Default Execution
-// =====================================
 
 export default function () {
-  runQueueFlow();
+  runFlow();
 
-  const now = Date.now();
-
-  // Push every 5 seconds
-  if (
-    now - lastMetricPush >
-    METRIC_PUSH_INTERVAL
-  ) {
-    pushMetrics();
-
-    lastMetricPush = now;
-  }
-
-  sleep(Math.random() * 0.5);
+  sleep(
+    Math.random() * 0.5
+  );
 }
 
-// =====================================
-// Final Summary
-// =====================================
 
-export function handleSummary(
-  data,
-) {
-  const summary = {
-    total_requests:
-      data.metrics.http_reqs
-        ?.count || 0,
+export function teardown() {
+  console.log(
+    'Waiting 1 minute before clearing metrics...'
+  );
 
-    failed_requests:
-      data.metrics
-        .failed_requests?.count ||
-      0,
+  sleep(30);
 
-    completed_requests:
-      data.metrics
-        .completed_requests
-        ?.count || 0,
+  console.log(
+    'Sending clear request to metrics server...'
+  );
 
-    queued_requests:
-      data.metrics
-        .queued_requests?.count ||
-      0,
+  const res = http.post(
+    `${METRIC_URL}/k6/clear`,
+    null,
+    {
+      timeout: '15s',
+    }
+  );
 
-    error_rate:
-      data.metrics.error_rate
-        ?.rate || 0,
-
-    avg_search_duration:
-      data.metrics
-        .search_duration?.avg ||
-      0,
-
-    avg_queue_wait:
-      data.metrics
-        .queue_wait_time?.avg ||
-      0,
-  };
-
-  try {
-    http.post(
-      `${METRIC_URL}/k6/summary`,
-      JSON.stringify(summary),
-      {
-        headers: {
-          'Content-Type':
-            'application/json',
-        },
-      },
-    );
-  } catch (e) {
-    console.error(
-      'Failed to send summary:',
-      e,
-    );
-  }
-
-  return {
-    'summary.json':
-      JSON.stringify(
-        summary,
-        null,
-        2,
-      ),
-  };
+  console.log(
+    `Clear response status: ${res.status}`
+  );
 }

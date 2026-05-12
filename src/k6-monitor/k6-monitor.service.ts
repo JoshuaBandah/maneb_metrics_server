@@ -1,44 +1,67 @@
 import { Injectable } from '@nestjs/common';
+import { Subject } from 'rxjs';
+
+export interface VuResult {
+  vu: number;
+  success: boolean;
+  waitTime?: number;
+  stage?: string;
+  reason?: string;
+  timestamp: number;
+}
 
 @Injectable()
 export class K6MonitorService {
-  private metrics = {
-    total_requests: 0,
-    failed_requests: 0,
-    completed_requests: 0,
-    queued_requests: 0,
-  };
+  private vuMap = new Map<number, VuResult>();
+  private log: VuResult[] = [];
 
-  // Add incremental updates from k6
-  update(data: any) {
-    this.metrics.total_requests +=
-      data.add_total_requests || 0;
+  private stream$ = new Subject<VuResult>();
 
-    this.metrics.failed_requests +=
-      data.add_failed_requests || 0;
-
-    this.metrics.completed_requests +=
-      data.add_completed_requests || 0;
-
-    this.metrics.queued_requests +=
-      data.add_queued_requests || 0;
-
-
-    console.table(this.metrics);
+  get stream() {
+    return this.stream$.asObservable();
   }
 
-  // Get current state
-  getMetrics() {
-    return this.metrics;
-  }
-
-  // Optional: reset
-  reset() {
-    this.metrics = {
-      total_requests: 0,
-      failed_requests: 0,
-      completed_requests: 0,
-      queued_requests: 0,
+  ingestResult(data: VuResult) {
+    const event: VuResult = {
+      ...data,
+      timestamp: Date.now(),
     };
+    console.table(data)
+
+    // latest state per VU
+    this.vuMap.set(data.vu, event);
+
+    // bounded log
+    this.log.push(event);
+    if (this.log.length > 10000) this.log.shift();
+
+    this.stream$.next(event);
+  }
+
+  getMetrics() {
+    const values = Array.from(this.vuMap.values());
+
+    const total = values.length;
+    const success = values.filter(v => v.success).length;
+    const failed = total - success;
+
+    return {
+      total_vus: total,
+      success_vus: success,
+      failed_vus: failed,
+      success_rate: total ? (success / total) * 100 : 0,
+    };
+  }
+
+  getDebug() {
+    return {
+      last_events: this.log.slice(-10),
+      unique_vus: this.vuMap.size,
+    };
+  }
+
+  reset() {
+    this.vuMap.clear();
+    this.log = [];
   }
 }
