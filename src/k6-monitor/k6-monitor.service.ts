@@ -26,7 +26,7 @@ export class K6MonitorService {
       ...data,
       timestamp: Date.now(),
     };
-    console.table(data)
+    // console.table(data)
 
     // latest state per VU
     this.vuMap.set(data.vu, event);

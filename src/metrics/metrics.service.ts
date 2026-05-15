@@ -103,14 +103,12 @@ export class MetricsService {
     return this.parseMetrics(raw);
   }
 
-  @Cron('*/3 * * * * *')
+  @Cron('*/2 * * * * *')
   async pollMetrics() {
     const data = await this.getMetrics();
     const k6Metrics = await this.getK6Metrics();
 
-    // -----------------------
-    // k6 metrics merge (safe)
-    // -----------------------
+
     if (k6Metrics && Object.keys(k6Metrics).length > 0) {
       this.clientSideData = {
         ...this.clientSideData,
@@ -141,9 +139,7 @@ export class MetricsService {
     const getValue = (metric: string) => data[metric]?.[0]?.value || 0;
     const getMetrics = (metric: string) => data[metric] || [];
 
-    // -----------------------
-    // Requests (delta logic)
-    // -----------------------
+
     const requests = getMetrics('http_requests_total');
     const failedMetrics = getMetrics('http_requests_failed_total');
 
@@ -172,9 +168,7 @@ export class MetricsService {
     const errorRate =
       totalRequests > 0 ? (failedRequests / totalRequests) * 100 : 0;
 
-    // -----------------------
-    // Latency
-    // -----------------------
+
     const sum = getValue('http_request_duration_seconds_sum');
     const count = getValue('http_request_duration_seconds_count');
     const avgResponseTimeMs = count > 0 ? (sum / count) * 1000 : 0;
@@ -211,23 +205,16 @@ export class MetricsService {
       }
     }
 
-    // -----------------------
-    // Memory
-    // -----------------------
     const memoryUsed = getValue('nodejs_heap_size_used_bytes');
     const memoryTotal = getValue('nodejs_heap_size_total_bytes');
     const memoryUsage =
       memoryTotal > 0 ? (memoryUsed / memoryTotal) * 100 : 0;
 
-    // -----------------------
-    // Event loop lag
-    // -----------------------
+
     const eventLoopLag =
       (getValue('nodejs_eventloop_lag_seconds') || 0) * 1000;
 
-    // -----------------------
-    // CPU
-    // -----------------------
+
     const cpuTotal = getValue('process_cpu_seconds_total');
     const now = Date.now();
 
@@ -254,9 +241,7 @@ export class MetricsService {
       timestamp: now,
     };
 
-    // -----------------------
-    // FINAL OUTPUT
-    // -----------------------
+
     return {
       memory: {
         used: memoryUsed,
