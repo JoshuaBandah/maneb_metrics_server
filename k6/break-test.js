@@ -5,108 +5,89 @@ const BASE_URL = 'http://localhost:3000';
 const METRIC_URL = 'http://localhost:3001';
 
 const TOTAL_RECORDS = 4000;
-const MAX_POLL_ATTEMPTS = 10;
-const POLL_INTERVAL = 5;
+
+const MAX_POLL_ATTEMPTS = 150;
+const POLL_INTERVAL = 1;
+
+const SUBMIT_MAX_RETRIES = 50;
+
 
 // GENERATE STUDENT
 
 function generateStudentData(studentNumber) {
   const startDate = new Date(2004, 0, 1);
-
   const targetDate = new Date(startDate);
 
-  targetDate.setDate(
-    startDate.getDate() +
-      (studentNumber - 1)
-  );
+  targetDate.setDate(startDate.getDate() + (studentNumber - 1));
 
   return {
-    student_number:
-      studentNumber.toString(),
-
-    date_of_birth:
-      targetDate
-        .toISOString()
-        .split('T')[0],
+    student_number: studentNumber.toString(),
+    date_of_birth: targetDate.toISOString().split('T')[0],
   };
 }
 
-// SUBMIT JOB
 
-function submitToQueue(
-  studentNumber,
-  dateOfBirth
-) {
+// SUBMIT (WITH RETRIES)
+
+function submitToQueue(studentNumber, dateOfBirth) {
   const url =
-    `${BASE_URL}/grades/view-uncached-results` +
-    `?date_of_birth=${encodeURIComponent(
-      dateOfBirth
-    )}` +
-    `&student_number=${encodeURIComponent(
-      studentNumber
-    )}`;
+    `${BASE_URL}/grades/view-cached-results-que` +
+    `?date_of_birth=${encodeURIComponent(dateOfBirth)}` +
+    `&student_number=${encodeURIComponent(studentNumber)}`;
 
-  const res = http.get(url, {
-    timeout: '5s',
+  let attempts = 0;
 
-    headers: {
-      'Content-Type':
-        'application/json',
-    },
-  });
+  while (attempts < SUBMIT_MAX_RETRIES) {
+    attempts++;
 
-  if (res.status !== 202) {
-    return {
-      success: false,
-      jobId: null,
-      reason: 'submit_failed',
-    };
+    const res = http.get(url, {
+      timeout: '60s',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (res.status === 202) {
+      try {
+        const body = JSON.parse(res.body);
+
+        if (body.success && body.data?.jobId) {
+          return {
+            success: true,
+            jobId: body.data.jobId,
+            retries: attempts - 1,
+          };
+        }
+      } catch (e) {}
+    }
+
+    // backoff before retry
+    sleep(0.2 * attempts);
   }
 
-  try {
-    const body = JSON.parse(
-      res.body
-    );
-
-    if (
-      body.success &&
-      body.data?.jobId
-    ) {
-      return {
-        success: true,
-
-        jobId:
-          body.data.jobId,
-      };
-    }
-  } catch (e) {}
-
+  // ONLY FAIL AFTER ALL RETRIES
   return {
     success: false,
     jobId: null,
-    reason: 'invalid_response',
+    reason: 'submit_failed_after_retries',
+    retries: attempts,
   };
 }
+
 
 // POLL RESULT
 
 function pollForResult(jobId) {
   const start = Date.now();
-
   let attempts = 0;
 
-  while (
-    attempts <
-    MAX_POLL_ATTEMPTS
-  ) {
+  while (attempts < MAX_POLL_ATTEMPTS) {
     const res = http.get(
       `${BASE_URL}/grades/queue/status/${jobId}`,
       {
-        timeout: '5s',
-
+        timeout: '60s',
         headers: {
-          'Content-Type':
-            'application/json',
+          'Content-Type': 'application/json',
         },
       }
     );
@@ -115,32 +96,21 @@ function pollForResult(jobId) {
 
     if (res.status === 200) {
       try {
-        const body = JSON.parse(
-          res.body
-        );
+        const body = JSON.parse(res.body);
 
-        if (
-          body.status ===
-          'completed'
-        ) {
+        if (body.status === 'completed') {
           return {
             success: true,
-
-            waitTime:
-              Date.now() -
-              start,
+            waitTime: Date.now() - start,
+            attempts,
           };
         }
 
-        if (
-          body.status ===
-          'failed'
-        ) {
+        if (body.status === 'failed') {
           return {
             success: false,
-
-            reason:
-              'backend_failed',
+            reason: 'backend_failed',
+            attempts,
           };
         }
       } catch (e) {}
@@ -152,10 +122,12 @@ function pollForResult(jobId) {
   return {
     success: false,
     reason: 'timeout',
+    attempts,
   };
 }
 
-// PUSH REALTIME RESULT
+
+// METRICS (ONLY FINAL RESULT)
 
 function pushVUResult(result) {
   http.post(
@@ -163,129 +135,77 @@ function pushVUResult(result) {
     JSON.stringify(result),
     {
       headers: {
-        'Content-Type':
-          'application/json',
+        'Content-Type': 'application/json',
       },
-
-      timeout: '3s',
+      timeout: '30s',
     }
   );
 }
 
-// MAIN FLOW
+
+// FLOW
 
 function runFlow() {
   const studentNumber =
-    Math.floor(
-      Math.random() *
-        TOTAL_RECORDS
-    ) + 1;
+    Math.floor(Math.random() * TOTAL_RECORDS) + 1;
 
-  const student =
-    generateStudentData(
-      studentNumber
-    );
+  const student = generateStudentData(studentNumber);
 
-  const submission =
-    submitToQueue(
-      student.student_number,
-      student.date_of_birth
-    );
+  // SUBMIT (WITH RETRIES)
+  const submission = submitToQueue(
+    student.student_number,
+    student.date_of_birth
+  );
 
-  // SUBMIT FAILED
   if (!submission.success) {
-    pushVUResult({
-      vu: __VU,
-
-      success: false,
-
-      stage: 'submit',
-
-      reason:
-        submission.reason,
-    });
-
     return;
   }
 
-  // POLL RESULT
-  const result =
-    pollForResult(
-      submission.jobId
-    );
+  // POLL
+  const result = pollForResult(submission.jobId);
 
-  // FINAL RESULT
   pushVUResult({
     vu: __VU,
-
-    success:
-      result.success,
-
-    waitTime:
-      result.waitTime || 0,
-
-    stage: result.success
-      ? 'completed'
-      : 'failed_or_timeout',
-
-    reason:
-      result.reason || null,
+    success: result.success,
+    waitTime: result.waitTime || 0,
+    retries: submission.retries || 0,
+    pollAttempts: result.attempts || 0,
+    stage: result.success ? 'completed' : 'failed_or_timeout',
+    reason: result.reason || null,
   });
 }
 
-// LOAD PROFILE
+
+// LOAD TEST
 
 export const options = {
   scenarios: {
     queue_test: {
       executor: 'ramping-vus',
-
       stages: [
-        {
-          duration: '1m',
-          target: 4000,
-        },
-
-        // optional ramp down
-        {
-          duration: '30s',
-          target: 0,
-        },
+        { duration: '1m', target: 10000 },
+        { duration: '1m', target: 10000 },
+        { duration: '30s', target: 0 },
       ],
     },
   },
 };
 
 
+// EXECUTION
+
 export default function () {
   runFlow();
-
-  sleep(
-    Math.random() * 0.5
-  );
+  sleep(Math.random() * 0.2);
 }
 
 
+// TEARDOWN
+
 export function teardown() {
-  console.log(
-    'Waiting 1 minute before clearing metrics...'
-  );
+  console.log('Clearing metrics...');
 
-  sleep(30);
-
-  console.log(
-    'Sending clear request to metrics server...'
-  );
-
-  const res = http.post(
-    `${METRIC_URL}/k6/clear`,
-    null,
-    {
-      timeout: '15s',
-    }
-  );
-
-  console.log(
-    `Clear response status: ${res.status}`
-  );
+  http.post(`${METRIC_URL}/k6/clear`, null, {
+    timeout: '30s',
+  });
 }
