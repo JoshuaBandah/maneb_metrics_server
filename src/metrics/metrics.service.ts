@@ -13,7 +13,7 @@ export class MetricsService {
   ) {}
 
   private readonly logger = new Logger(MetricsService.name);
-  private readonly TARGET = 'http://10.10.20.52:3000/metrics';
+  private readonly TARGET = 'http://10.10.20.52:3005/metrics';
 
   private clientSideData: any = {};
   private metricsStore: Record<string, any[]> = {};
