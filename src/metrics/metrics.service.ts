@@ -13,7 +13,7 @@ export class MetricsService {
   ) {}
 
   private readonly logger = new Logger(MetricsService.name);
-  private readonly TARGET = 'http://localhost:3000/metrics';
+  private readonly TARGET = 'http://10.10.20.52:3000/metrics';
 
   private clientSideData: any = {};
   private metricsStore: Record<string, any[]> = {};
@@ -103,7 +103,7 @@ export class MetricsService {
     return this.parseMetrics(raw);
   }
 
-  @Cron('*/2 * * * * *')
+  @Cron('*/5 * * * * *')
   async pollMetrics() {
     const data = await this.getMetrics();
     const k6Metrics = await this.getK6Metrics();
