@@ -12,7 +12,7 @@ export class AuthenticationController {
   constructor(private readonly authenticationService: AuthenticationService) { }
 
   @Public()
-  @HttpCode(HttpStatus.OK)
+  //@HttpCode(HttpStatus.OK)
   @Post('/login')
   async login(
     @Body() loginUserDto: loginUserDto,
@@ -51,6 +51,7 @@ export class AuthenticationController {
     const res = this.authenticationService.requestOtp(requestOtpDto)
     return res
   }
+
   @Public()
   @Post('/otp_verify')
   async verifyOtp(

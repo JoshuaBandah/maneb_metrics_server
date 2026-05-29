@@ -9,8 +9,6 @@ async function bootstrap() {
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
   });
-  await app.listen(process.env.PORT ?? 3001);
-
   app.useGlobalPipes(
     new ValidationPipe({
       disableErrorMessages: true,
@@ -19,5 +17,8 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+  
+  await app.listen(process.env.PORT ?? 3001);
 }
 bootstrap();
